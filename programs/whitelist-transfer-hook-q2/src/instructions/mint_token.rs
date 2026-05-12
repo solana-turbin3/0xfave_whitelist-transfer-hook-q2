@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenInterface};
 
-use crate::state::Whitelist;
+
 
 #[derive(Accounts)]
 pub struct TokenFactory<'info> {
@@ -17,17 +17,14 @@ pub struct TokenFactory<'info> {
     /// CHECK: ExtraAccountMetaList Account, will be checked by the transfer hook
     #[account(mut)]
     pub extra_account_meta_list: UncheckedAccount<'info>,
-    #[account(
-        seeds = [b"whitelist"],
-        bump
-    )]
-    pub blocklist: Account<'info, Whitelist>,
+    /// CHECK: unused, kept for instruction format compatibility
+    pub blocklist: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
     pub token_program: Interface<'info, TokenInterface>,
 }
 
 impl<'info> TokenFactory<'info> {
-    pub fn init_mint(&mut self, bumps: &TokenFactoryBumps) -> Result<()> {
+    pub fn init_mint(&mut self, _bumps: &TokenFactoryBumps) -> Result<()> {
         Ok(())
     }
 }

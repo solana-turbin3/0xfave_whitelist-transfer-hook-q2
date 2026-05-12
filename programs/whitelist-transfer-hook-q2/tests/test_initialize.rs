@@ -50,55 +50,44 @@ fn test_full_flow() {
     svm.add_program(program_id, bytes).unwrap();
     svm.airdrop(&payer.pubkey(), 10_000_000_000).unwrap();
 
-    let (whitelist_pda, _) = Pubkey::find_program_address(&[b"whitelist"], &program_id);
     let system_program_id = solana_program::system_program::id();
 
-    // Step 1: Initialize whitelist
-    let ix = Instruction::new_with_bytes(
-        program_id,
-        &program::instruction::InitializeWhitelist {}.data(),
-        program::accounts::InitializeWhitelist {
-            admin: payer.pubkey(),
-            whitelist: whitelist_pda,
-            system_program: system_program_id,
-        }
-        .to_account_metas(None),
-    );
-    send(&mut svm, &[ix], &payer, &[&payer]).expect("initialize_whitelist failed");
+    // Helper to derive the whitelist entry PDA for an address
+    let whitelist_entry_pda_for = |address: &Pubkey| -> Pubkey {
+        Pubkey::find_program_address(&[b"whitelist_entry", address.as_ref()], &program_id).0
+    };
 
-    // Step 2: Add user (payer) to whitelist
+    // Step 1: Add user (payer) to whitelist
+    let add_whitelist_entry_pda = whitelist_entry_pda_for(&payer.pubkey());
     let ix = Instruction::new_with_bytes(
         program_id,
-        &program::instruction::AddToWhitelist {
-            user: payer.pubkey(),
-        }
-        .data(),
-        program::accounts::WhitelistOperations {
+        &program::instruction::AddToWhitelist {}.data(),
+        program::accounts::AddToWhitelist {
             admin: payer.pubkey(),
-            whitelist: whitelist_pda,
+            user: payer.pubkey(),
+            whitelist_entry: add_whitelist_entry_pda,
             system_program: system_program_id,
         }
         .to_account_metas(None),
     );
     send(&mut svm, &[ix], &payer, &[&payer]).expect("add_to_whitelist failed");
 
-    // Step 3: Remove user from whitelist
+    // Step 2: Remove user from whitelist
+    let remove_whitelist_entry_pda = whitelist_entry_pda_for(&payer.pubkey());
     let ix = Instruction::new_with_bytes(
         program_id,
-        &program::instruction::RemoveFromWhitelist {
-            user: payer.pubkey(),
-        }
-        .data(),
-        program::accounts::WhitelistOperations {
+        &program::instruction::RemoveFromWhitelist {}.data(),
+        program::accounts::RemoveFromWhitelist {
             admin: payer.pubkey(),
-            whitelist: whitelist_pda,
+            user: payer.pubkey(),
+            whitelist_entry: remove_whitelist_entry_pda,
             system_program: system_program_id,
         }
         .to_account_metas(None),
     );
     send(&mut svm, &[ix], &payer, &[&payer]).expect("remove_from_whitelist failed");
 
-    // Step 4: Create mint with TransferHook extension
+    // Step 3: Create mint with TransferHook extension
     let mint = Keypair::new();
     let mint_size =
         ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TransferHook]).unwrap();
@@ -129,7 +118,7 @@ fn test_full_flow() {
     )
     .expect("create mint with transfer hook failed");
 
-    // Step 5: Create source/destination ATAs and mint 100 tokens to source
+    // Step 4: Create source/destination ATAs and mint 100 tokens to source
     let source_ata = get_associated_token_address_with_program_id(
         &payer.pubkey(),
         &mint.pubkey(),
@@ -172,7 +161,7 @@ fn test_full_flow() {
     )
     .expect("create ATAs and mint_to failed");
 
-    // Step 6: Initialize ExtraAccountMetaList for the transfer hook
+    // Step 5: Initialize ExtraAccountMetaList for the transfer hook
     let (extra_meta_pda, _) = Pubkey::find_program_address(
         &[b"extra-account-metas", mint.pubkey().as_ref()],
         &program_id,
@@ -204,17 +193,18 @@ fn test_full_flow() {
             9,
         )
         .unwrap();
-        // Order: extra_account_meta_list, then TLV-registered extras (whitelist), then hook program ID.
+        let whitelist_entry_pda = whitelist_entry_pda_for(&source.pubkey());
+        // Order: extra_account_meta_list, then TLV-registered extras (whitelist_entry), then hook program ID.
         ix.accounts
             .push(AccountMeta::new_readonly(extra_meta_pda, false));
         ix.accounts
-            .push(AccountMeta::new_readonly(whitelist_pda, false));
+            .push(AccountMeta::new_readonly(whitelist_entry_pda, false));
         ix.accounts
             .push(AccountMeta::new_readonly(program_id, false));
         ix
     };
 
-    // Step 7a: Transfer should fail — payer was removed from the whitelist
+    // Step 6a: Transfer should fail — payer was removed from the whitelist
     let transfer_fail_ix = build_transfer_ix(&payer, &mint, source_ata, dest_ata);
     let res = send(&mut svm, &[transfer_fail_ix], &payer, &[&payer]);
     assert!(
@@ -222,16 +212,15 @@ fn test_full_flow() {
         "transfer should fail — payer is not whitelisted"
     );
 
-    // Step 7b: Re-add payer to whitelist, then the transfer should succeed
+    // Step 6b: Re-add payer to whitelist, then the transfer should succeed
+    let re_add_pda = whitelist_entry_pda_for(&payer.pubkey());
     let ix = Instruction::new_with_bytes(
         program_id,
-        &program::instruction::AddToWhitelist {
-            user: payer.pubkey(),
-        }
-        .data(),
-        program::accounts::WhitelistOperations {
+        &program::instruction::AddToWhitelist {}.data(),
+        program::accounts::AddToWhitelist {
             admin: payer.pubkey(),
-            whitelist: whitelist_pda,
+            user: payer.pubkey(),
+            whitelist_entry: re_add_pda,
             system_program: system_program_id,
         }
         .to_account_metas(None),
